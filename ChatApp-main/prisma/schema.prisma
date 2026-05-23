@@ -1,0 +1,112 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Room {
+  id                    String       @id @default(cuid())
+  slug                  String       @unique
+  name                  String
+  type                  String       @default("GROUP")
+  maxUsers              Int?
+  expiresAt             DateTime?
+  creatorIdentityId      String?
+  ownerRecoveryCodeHash String?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  members               RoomMember[]
+  messages              Message[]
+  attachments           Attachment[]
+
+  @@index([slug])
+  @@index([expiresAt])
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  nickname     String
+  passwordHash String
+  lastActiveAt DateTime     @default(now())
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  sessions     UserSession[]
+  attachments  Attachment[]
+}
+
+model UserSession {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model RoomMember {
+  id         String   @id @default(cuid())
+  roomId     String
+  identityId String
+  nickname   String
+  role       String   @default("guest")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  room       Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  messages   Message[]
+  attachments Attachment[]
+
+  @@unique([roomId, identityId])
+  @@index([roomId, role])
+}
+
+model Message {
+  id         String      @id @default(cuid())
+  roomId     String
+  memberId   String
+  body       String
+  editedAt   DateTime?
+  deletedAt  DateTime?
+  createdAt  DateTime    @default(now())
+  room       Room        @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  member     RoomMember  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  attachments Attachment[]
+
+  @@index([roomId, createdAt])
+}
+
+model Attachment {
+  id               String          @id @default(cuid())
+  roomId           String
+  messageId        String?
+  memberId         String
+  uploaderUserId   String?
+  uploaderIdentityId String
+  originalName     String
+  storedName       String          @unique
+  mimeType         String
+  extension        String
+  kind             String
+  byteSize         Int
+  expiresAt        DateTime?
+  deletedAt        DateTime?
+  deletedReason    String?
+  createdAt        DateTime        @default(now())
+  room             Room            @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  message          Message?        @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  member           RoomMember      @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  uploaderUser     User?           @relation(fields: [uploaderUserId], references: [id], onDelete: SetNull)
+
+  @@index([roomId])
+  @@index([messageId])
+  @@index([memberId])
+  @@index([uploaderUserId, createdAt])
+  @@index([expiresAt])
+  @@index([deletedAt])
+}
