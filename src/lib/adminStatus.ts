@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import { existsSync, promises as fs } from "fs";
 import path from "path";
 import { promisify } from "util";
+import { getUpdateStatus, startAppUpdate } from "./adminUpdate";
 import { prisma } from "./db";
 import { ACCOUNT_STORAGE_LIMIT_BYTES, cleanupExpiredAndMissingUploads, getStorageSummary, getUploadRoot } from "./uploads";
 import packageJson from "../../package.json";
@@ -31,6 +32,7 @@ export async function getAdminStatus() {
       disk
     },
     users,
+    update: await getUpdateStatus(),
     health: {
       databaseReachable: database.reachable,
       uploadsFolderWritable: uploadsWritable,
@@ -77,6 +79,10 @@ export function getManualUpdatePlan() {
       "pm2 restart websmiths-chatapp"
     ]
   };
+}
+
+export async function triggerAppUpdate() {
+  return startAppUpdate();
 }
 
 async function getUserStorageOverview() {

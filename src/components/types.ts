@@ -46,3 +46,8 @@ export type JoinResponse = {
   messages: ChatMessage[];
   onlineCount: number;
 };
+
+export type TypingMember = {
+  memberId: string;
+  nickname: string;
+};

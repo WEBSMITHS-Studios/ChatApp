@@ -63,6 +63,11 @@ type NicknamePayload = {
   nickname: string;
 };
 
+type TypingPayload = {
+  roomId: string;
+  isTyping: boolean;
+};
+
 type AckFn = (value: { ok: true; data?: unknown } | { ok: false; error: string }) => void;
 
 type SocketRoomSession = {
@@ -81,6 +86,7 @@ const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 const onlineByRoom = new Map<string, Map<string, Set<string>>>();
 const socketSessions = new Map<string, SocketSession>();
+const typingByRoom = new Map<string, Map<string, { memberId: string; nickname: string }>>();
 
 function onlineCount(roomId: string) {
   return onlineByRoom.get(roomId)?.size ?? 0;
@@ -104,6 +110,28 @@ function removeOnline(roomId: string, identityId: string, socketId: string) {
   sockets.delete(socketId);
   if (sockets.size === 0) roomMap.delete(identityId);
   if (roomMap.size === 0) onlineByRoom.delete(roomId);
+}
+
+function emitTyping(roomId: string, socketServer: Server) {
+  const typingEntries = typingByRoom.get(roomId);
+  socketServer.to(roomId).emit("room:typing", {
+    members: typingEntries ? Array.from(typingEntries.values()) : []
+  });
+}
+
+function setTyping(roomId: string, identityId: string, memberId: string, nickname: string, socketServer: Server) {
+  const roomTyping = typingByRoom.get(roomId) ?? new Map<string, { memberId: string; nickname: string }>();
+  roomTyping.set(identityId, { memberId, nickname });
+  typingByRoom.set(roomId, roomTyping);
+  emitTyping(roomId, socketServer);
+}
+
+function clearTyping(roomId: string, identityId: string, socketServer: Server) {
+  const roomTyping = typingByRoom.get(roomId);
+  if (!roomTyping) return;
+  roomTyping.delete(identityId);
+  if (roomTyping.size === 0) typingByRoom.delete(roomId);
+  emitTyping(roomId, socketServer);
 }
 
 function permissionDenied() {
@@ -213,6 +241,7 @@ app.prepare().then(async () => {
 
         io.to(room.id).emit("room:online", { roomId: room.id, onlineCount: response.onlineCount });
         io.to(room.id).emit("room:members", response.members);
+        emitTyping(room.id, io);
         ack?.({ ok: true, data: response });
       } catch (error) {
         ack?.({ ok: false, error: error instanceof Error ? error.message : "Could not join room" });
@@ -275,6 +304,7 @@ app.prepare().then(async () => {
           attachments: message.attachments.map(publicAttachment)
         };
 
+        clearTyping(member.roomId, member.identityId, io);
         io.to(member.roomId).emit("message:new", publicMessage);
         ack?.({ ok: true });
       } catch (error) {
@@ -306,6 +336,7 @@ app.prepare().then(async () => {
           include: { member: true, attachments: true }
         });
 
+        clearTyping(member.roomId, member.identityId, io);
         io.to(member.roomId).emit("message:edited", {
           id: updated.id,
           body: updated.body,
@@ -377,6 +408,19 @@ app.prepare().then(async () => {
         ack?.({ ok: true, data: { nickname } });
       } catch (error) {
         ack?.({ ok: false, error: error instanceof Error ? error.message : "Could not update nickname" });
+      }
+    });
+
+    socket.on("room:typing", async (payload: TypingPayload) => {
+      try {
+        const { member } = await getVerifiedActor(payload.roomId);
+        if (payload.isTyping) {
+          setTyping(member.roomId, member.identityId, member.id, member.nickname, io);
+        } else {
+          clearTyping(member.roomId, member.identityId, io);
+        }
+      } catch {
+        // Ignore invalid typing state updates.
       }
     });
 
@@ -533,6 +577,7 @@ app.prepare().then(async () => {
       if (session) {
         for (const roomSession of session.rooms.values()) {
           removeOnline(roomSession.roomId, roomSession.identityId, socket.id);
+          clearTyping(roomSession.roomId, roomSession.identityId, io);
           io.to(roomSession.roomId).emit("room:online", {
             roomId: roomSession.roomId,
             onlineCount: onlineCount(roomSession.roomId)
