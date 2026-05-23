@@ -13,6 +13,14 @@ const roleLabel: Record<RoomRole, string> = {
   super_admin: "Owner"
 };
 
+const identityStorageKey = "websmiths-chatapp.identityId";
+const legacyIdentityStorageKey = "anon-chat.identityId";
+const nicknameStorageKey = "websmiths-chatapp.nickname";
+const legacyNicknameStorageKey = "anon-chat.nickname";
+const ownerRecoveryStoragePrefix = "websmiths-chatapp.ownerRecovery.";
+const legacyOwnerRecoveryStoragePrefix = "anon-chat.ownerRecovery.";
+const guestIdentityCookieName = "websmiths_chatapp_guest_identity";
+
 export function ChatPage({ slug }: { slug: string }) {
   const router = useRouter();
   const [identityId, setIdentityId] = useState("");
@@ -42,12 +50,13 @@ export function ChatPage({ slug }: { slug: string }) {
   }, [room]);
 
   useEffect(() => {
-    const storedIdentity = localStorage.getItem("websmiths-chatapp.identityId") || crypto.randomUUID();
-    localStorage.setItem("websmiths-chatapp.identityId", storedIdentity);
+    const storedIdentity = localStorage.getItem(identityStorageKey) || localStorage.getItem(legacyIdentityStorageKey) || crypto.randomUUID();
+    localStorage.setItem(identityStorageKey, storedIdentity);
+    document.cookie = `${guestIdentityCookieName}=${encodeURIComponent(storedIdentity)}; Path=/; Max-Age=31536000; SameSite=Lax`;
     setGuestIdentityId(storedIdentity);
     setIdentityId(storedIdentity);
 
-    const storedNickname = localStorage.getItem("websmiths-chatapp.nickname") || "";
+    const storedNickname = localStorage.getItem(nicknameStorageKey) || localStorage.getItem(legacyNicknameStorageKey) || "";
     setNickname(storedNickname);
     setNicknameDraft(storedNickname);
 
@@ -133,10 +142,13 @@ export function ChatPage({ slug }: { slug: string }) {
   useEffect(() => {
     if (!slug) return;
 
-    const code = sessionStorage.getItem(`websmiths-chatapp.ownerRecovery.${slug}`);
+    const code =
+      sessionStorage.getItem(`${ownerRecoveryStoragePrefix}${slug}`) ||
+      sessionStorage.getItem(`${legacyOwnerRecoveryStoragePrefix}${slug}`);
     if (code) {
       setOwnerRecoveryCode(code);
-      sessionStorage.removeItem(`websmiths-chatapp.ownerRecovery.${slug}`);
+      sessionStorage.removeItem(`${ownerRecoveryStoragePrefix}${slug}`);
+      sessionStorage.removeItem(`${legacyOwnerRecoveryStoragePrefix}${slug}`);
     }
   }, [slug]);
 
@@ -148,7 +160,7 @@ export function ChatPage({ slug }: { slug: string }) {
     event.preventDefault();
     const clean = nicknameDraft.trim().replace(/\s+/g, " ").slice(0, 32);
     if (!clean) return;
-    localStorage.setItem("websmiths-chatapp.nickname", clean);
+    localStorage.setItem(nicknameStorageKey, clean);
     setNickname(clean);
   }
 
@@ -168,14 +180,15 @@ export function ChatPage({ slug }: { slug: string }) {
     setIdentityId(`user:${json.user.id}`);
     setNickname(json.user.nickname);
     setNicknameDraft(json.user.nickname);
-    localStorage.setItem("websmiths-chatapp.nickname", json.user.nickname);
+    localStorage.setItem(nicknameStorageKey, json.user.nickname);
   }
 
   async function signOut() {
     await fetch("/api/auth/me", { method: "DELETE" });
     setAuthUser(null);
     setIdentityId(guestIdentityId);
-    setNickname(localStorage.getItem("websmiths-chatapp.nickname") || "");
+    document.cookie = `${guestIdentityCookieName}=${encodeURIComponent(guestIdentityId)}; Path=/; Max-Age=31536000; SameSite=Lax`;
+    setNickname(localStorage.getItem(nicknameStorageKey) || localStorage.getItem(legacyNicknameStorageKey) || "");
   }
 
   function sendMessage(event: FormEvent) {
@@ -212,7 +225,7 @@ export function ChatPage({ slug }: { slug: string }) {
         return;
       }
       const clean = ack.data?.nickname ?? nextNickname.trim().replace(/\s+/g, " ").slice(0, 32);
-      localStorage.setItem("websmiths-chatapp.nickname", clean);
+      localStorage.setItem(nicknameStorageKey, clean);
       setNickname(clean);
       setNicknameDraft(clean);
       setAuthUser((current) => (current ? { ...current, nickname: clean } : current));
@@ -272,7 +285,7 @@ export function ChatPage({ slug }: { slug: string }) {
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || "Could not create room");
       if (json.ownerRecoveryCode && json.room?.slug) {
-        sessionStorage.setItem(`websmiths-chatapp.ownerRecovery.${json.room.slug}`, json.ownerRecoveryCode);
+        sessionStorage.setItem(`${ownerRecoveryStoragePrefix}${json.room.slug}`, json.ownerRecoveryCode);
       }
       await router.push(`/room/${json.room.slug}`);
     } catch (createError) {
