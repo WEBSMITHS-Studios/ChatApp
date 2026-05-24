@@ -55,6 +55,7 @@ export function ChatPage({ slug }: { slug: string }) {
   const [onlineCount, setOnlineCount] = useState(0);
   const [typingMembers, setTypingMembers] = useState<TypingMember[]>([]);
   const [messageDraft, setMessageDraft] = useState("");
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [ownerRecoveryCode, setOwnerRecoveryCode] = useState<string | null>(null);
@@ -181,6 +182,7 @@ export function ChatPage({ slug }: { slug: string }) {
       setMessages(ack.data.messages);
       setOnlineCount(ack.data.onlineCount);
       setTypingMembers([]);
+      setReplyingTo(null);
       setError("");
     });
 
@@ -213,6 +215,11 @@ export function ChatPage({ slug }: { slug: string }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length]);
+
+  useEffect(() => {
+    if (!replyingTo) return;
+    setReplyingTo(messages.find((message) => message.id === replyingTo.id) ?? null);
+  }, [messages, replyingTo]);
 
   useEffect(() => {
     return () => {
@@ -378,13 +385,19 @@ export function ChatPage({ slug }: { slug: string }) {
 
     socketRef.current.emit(
       "message:send",
-      { roomId: room.id, body: messageDraft, attachmentIds: pendingAttachments.map((attachment) => attachment.id) },
+      {
+        roomId: room.id,
+        body: messageDraft,
+        attachmentIds: pendingAttachments.map((attachment) => attachment.id),
+        replyToMessageId: replyingTo?.id ?? null
+      },
       (ack: Ack) => {
         if (!ack.ok) {
           setError(ack.error);
           return;
         }
         setMessageDraft("");
+        setReplyingTo(null);
         setPendingAttachments([]);
         if (typingTimeoutRef.current) {
           window.clearTimeout(typingTimeoutRef.current);
@@ -596,6 +609,7 @@ export function ChatPage({ slug }: { slug: string }) {
                           groupedWithNext={shouldGroupMessages(message, next)}
                           canDelete={(canDelete || isMine) && !message.deletedAt}
                           canEdit={isMine && !message.deletedAt}
+                          onReply={() => setReplyingTo(message)}
                           onDelete={() => deleteMessage(message.id)}
                           onEdit={(body) => editMessage(message.id, body)}
                         />
@@ -610,6 +624,23 @@ export function ChatPage({ slug }: { slug: string }) {
                 </div>
 
                 <form onSubmit={sendMessage} className="glass-shell border-t border-white/10 px-3 py-3 sm:px-4 sm:py-4">
+                  {replyingTo ? (
+                    <div className="mb-3 flex items-start justify-between gap-3 rounded-[20px] border border-cyan-300/18 bg-cyan-300/[0.08] px-4 py-3 text-sm">
+                      <div className="min-w-0">
+                        <div className="text-xs uppercase tracking-[0.14em] text-cyan-100">Replying to {replyingTo.member.nickname}</div>
+                        <div className="mt-1 truncate text-zinc-300">
+                          {replyingTo.deletedAt ? "Message deleted" : getReplySnippet(replyingTo.body, replyingTo.attachments.length)}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="secondary-button rounded-full px-3 py-1.5 text-xs text-zinc-100"
+                        onClick={() => setReplyingTo(null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : null}
                   {pendingAttachments.length ? (
                     <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
                       {pendingAttachments.map((attachment) => (
@@ -1415,6 +1446,7 @@ function MessageRow({
   groupedWithNext,
   canDelete,
   canEdit,
+  onReply,
   onDelete,
   onEdit
 }: {
@@ -1424,6 +1456,7 @@ function MessageRow({
   groupedWithNext: boolean;
   canDelete: boolean;
   canEdit: boolean;
+  onReply: () => void;
   onDelete: () => void;
   onEdit: (body: string) => void;
 }) {
@@ -1485,9 +1518,24 @@ function MessageRow({
                 <button className="liquid-button rounded-2xl px-4 text-sm font-semibold">Save</button>
               </form>
             ) : (
-              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-zinc-200">
-                {message.deletedAt ? "Message deleted" : message.body}
-              </p>
+              <>
+                {message.replyTo ? (
+                  <button
+                    type="button"
+                    className="mt-2 block w-full rounded-[18px] border border-white/10 bg-white/[0.04] px-3 py-2 text-left"
+                    onClick={onReply}
+                    title="Reply to this message"
+                  >
+                    <div className="text-xs font-medium text-zinc-300">{message.replyTo.member.nickname}</div>
+                    <div className="mt-1 truncate text-xs text-zinc-500">
+                      {message.replyTo.deletedAt ? "Message deleted" : getReplySnippet(message.replyTo.body)}
+                    </div>
+                  </button>
+                ) : null}
+                <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-zinc-200">
+                  {message.deletedAt ? "Message deleted" : message.body}
+                </p>
+              </>
             )}
             {!message.deletedAt && message.attachments.length ? (
               <div className="mt-3 flex flex-wrap gap-2">
@@ -1505,6 +1553,15 @@ function MessageRow({
                 onClick={() => setEditing((value) => !value)}
               >
                 Edit
+              </button>
+            ) : null}
+            {!message.deletedAt ? (
+              <button
+                type="button"
+                className="secondary-button rounded-full px-3 py-1.5 text-xs text-zinc-300 hover:text-zinc-100"
+                onClick={onReply}
+              >
+                Reply
               </button>
             ) : null}
             {canDelete ? (
@@ -1653,4 +1710,11 @@ function formatBytes(bytes: number) {
 
 function formatMessageTime(value: string) {
   return new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function getReplySnippet(body: string, attachmentCount = 0) {
+  const clean = body.trim();
+  if (clean) return clean.slice(0, 80);
+  if (attachmentCount > 0) return `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
+  return "Message";
 }

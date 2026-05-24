@@ -4,7 +4,14 @@ import path from "path";
 import { promisify } from "util";
 import { getUpdateStatus, startAppUpdate } from "./adminUpdate";
 import { prisma } from "./db";
-import { ACCOUNT_STORAGE_LIMIT_BYTES, cleanupExpiredAndMissingUploads, getStorageSummary, getUploadRoot } from "./uploads";
+import {
+  ACCOUNT_STORAGE_LIMIT_BYTES,
+  cleanupExpiredAndMissingUploads,
+  deleteStoredAttachment,
+  getStorageSummary,
+  getUploadRoot
+} from "./uploads";
+import { GLOBAL_ROOM_SLUG } from "../server/rooms";
 import packageJson from "../../package.json";
 
 const execFileAsync = promisify(execFile);
@@ -45,6 +52,93 @@ export async function getAdminStatus() {
 export async function runManualCleanup() {
   await cleanupExpiredAndMissingUploads();
   return getAdminStatus();
+}
+
+export async function purgeDeletedGlobalMessages() {
+  const room = await prisma.room.findUnique({
+    where: { slug: GLOBAL_ROOM_SLUG },
+    select: { id: true }
+  });
+  if (!room) {
+    throw new Error("Global chat was not found");
+  }
+
+  const deletedMessages = await prisma.message.findMany({
+    where: {
+      roomId: room.id,
+      deletedAt: { not: null }
+    },
+    select: { id: true }
+  });
+
+  if (deletedMessages.length === 0) {
+    return {
+      action: "purgeDeletedGlobalMessages",
+      removedMessages: 0,
+      removedAttachments: 0,
+      status: await getAdminStatus()
+    };
+  }
+
+  const messageIds = deletedMessages.map((message) => message.id);
+  const attachments = await prisma.attachment.findMany({
+    where: {
+      roomId: room.id,
+      messageId: { in: messageIds }
+    },
+    select: { id: true, storedName: true }
+  });
+
+  for (const attachment of attachments) {
+    await deleteStoredAttachment(attachment.storedName);
+  }
+
+  await prisma.attachment.deleteMany({
+    where: { id: { in: attachments.map((attachment) => attachment.id) } }
+  });
+  const deleted = await prisma.message.deleteMany({
+    where: { id: { in: messageIds } }
+  });
+
+  return {
+    action: "purgeDeletedGlobalMessages",
+    removedMessages: deleted.count,
+    removedAttachments: attachments.length,
+    status: await getAdminStatus()
+  };
+}
+
+export async function clearGlobalChatMessages() {
+  const room = await prisma.room.findUnique({
+    where: { slug: GLOBAL_ROOM_SLUG },
+    select: { id: true }
+  });
+  if (!room) {
+    throw new Error("Global chat was not found");
+  }
+
+  const attachments = await prisma.attachment.findMany({
+    where: { roomId: room.id },
+    select: { id: true, storedName: true }
+  });
+
+  for (const attachment of attachments) {
+    await deleteStoredAttachment(attachment.storedName);
+  }
+
+  await prisma.attachment.deleteMany({
+    where: { roomId: room.id }
+  });
+  const deleted = await prisma.message.deleteMany({
+    where: { roomId: room.id }
+  });
+
+  return {
+    action: "clearGlobalChatMessages",
+    removedMessages: deleted.count,
+    removedAttachments: attachments.length,
+    status: await getAdminStatus()
+  };
 }
 
 export async function checkUpdates() {

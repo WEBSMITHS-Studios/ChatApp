@@ -25,6 +25,14 @@ export type ChatMessage = {
   createdAt: string;
   member: Member;
   attachments: Attachment[];
+  replyTo: MessageReplyPreview | null;
+};
+
+export type MessageReplyPreview = {
+  id: string;
+  body: string;
+  deletedAt: string | null;
+  member: Member;
 };
 
 export type Attachment = {

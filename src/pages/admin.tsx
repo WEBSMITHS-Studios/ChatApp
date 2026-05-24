@@ -119,6 +119,9 @@ export default function AdminPage() {
       if (url.includes("cleanup")) {
         setStatus(json);
       }
+      if (url.includes("/global-chat/")) {
+        setStatus(json.status);
+      }
       if (url.includes("/update")) {
         setUpdateStatus(json);
       }
@@ -246,6 +249,42 @@ export default function AdminPage() {
                 </div>
               </section>
             </div>
+
+            <section className="mb-6 grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+              <div className="glass-panel rounded-[28px] p-5">
+                <h2 className="text-lg font-semibold text-white">Global Chat Maintenance</h2>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
+                  Use these carefully. One button permanently removes already-deleted global chat rows to free storage. The other clears all global chat messages and attachments while keeping the room itself intact.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button
+                    className="secondary-button rounded-2xl px-4 py-2 text-sm text-zinc-100"
+                    onClick={() => void postAction("/api/admin/global-chat/purge-deleted")}
+                    disabled={busyAction !== null}
+                  >
+                    {busyAction?.includes("purge-deleted") ? "Purging..." : "Delete deleted messages"}
+                  </button>
+                  <button
+                    className="rounded-2xl bg-red-400/12 px-4 py-2 text-sm font-medium text-red-100 hover:bg-red-400/18"
+                    onClick={() => void postAction("/api/admin/global-chat/clear")}
+                    disabled={busyAction !== null}
+                  >
+                    {busyAction?.includes("/global-chat/clear") ? "Clearing..." : "Clear global chat"}
+                  </button>
+                </div>
+              </div>
+              <div className="glass-panel rounded-[28px] p-5">
+                <h2 className="text-lg font-semibold text-white">What Stays Safe</h2>
+                <div className="mt-3 space-y-3 text-sm leading-6 text-zinc-400">
+                  <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+                    Room membership, the global room itself, user accounts, and app settings stay intact.
+                  </div>
+                  <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+                    Clearing global chat removes message rows and global attachments to reduce storage and keep the room lightweight.
+                  </div>
+                </div>
+              </div>
+            </section>
 
             {status ? (
               <div className="grid gap-4 xl:grid-cols-2">

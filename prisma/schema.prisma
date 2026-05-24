@@ -67,18 +67,22 @@ model RoomMember {
 }
 
 model Message {
-  id         String      @id @default(cuid())
-  roomId     String
-  memberId   String
-  body       String
-  editedAt   DateTime?
-  deletedAt  DateTime?
-  createdAt  DateTime    @default(now())
-  room       Room        @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  member     RoomMember  @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  attachments Attachment[]
+  id               String      @id @default(cuid())
+  roomId           String
+  memberId         String
+  replyToMessageId String?
+  body             String
+  editedAt         DateTime?
+  deletedAt        DateTime?
+  createdAt        DateTime    @default(now())
+  room             Room        @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  member           RoomMember  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  replyTo          Message?    @relation("MessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies          Message[]   @relation("MessageReplies")
+  attachments      Attachment[]
 
   @@index([roomId, createdAt])
+  @@index([replyToMessageId])
 }
 
 model Attachment {

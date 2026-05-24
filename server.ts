@@ -35,6 +35,7 @@ type MessagePayload = {
   roomId: string;
   body: string;
   attachmentIds?: string[];
+  replyToMessageId?: string | null;
 };
 
 type EditMessagePayload = {
@@ -267,6 +268,7 @@ app.prepare().then(async () => {
       try {
         const body = sanitizeMessage(payload.body);
         const attachmentIds = Array.isArray(payload.attachmentIds) ? payload.attachmentIds.slice(0, 4) : [];
+        const replyToMessageId = typeof payload.replyToMessageId === "string" ? payload.replyToMessageId.trim() : "";
         if (!body && attachmentIds.length === 0) throw new Error("Message cannot be empty");
 
         const { member } = await getVerifiedActor(payload.roomId);
@@ -295,10 +297,22 @@ app.prepare().then(async () => {
           throw new Error("One attachment has expired");
         }
 
+        const replyTarget = replyToMessageId
+          ? await prisma.message.findFirst({
+              where: {
+                id: replyToMessageId,
+                roomId: member.roomId
+              },
+              include: { member: true }
+            })
+          : null;
+        if (replyToMessageId && !replyTarget) throw new Error("The message you replied to is no longer available");
+
         const message = await prisma.message.create({
           data: {
             roomId: member.roomId,
             memberId: member.id,
+            replyToMessageId: replyTarget?.id ?? null,
             body,
             attachments: attachmentIds.length
               ? {
@@ -306,7 +320,7 @@ app.prepare().then(async () => {
                 }
               : undefined
           },
-          include: { member: true, attachments: true }
+          include: { member: true, attachments: true, replyTo: { include: { member: true } } }
         });
 
         const publicMessage = {
@@ -316,7 +330,8 @@ app.prepare().then(async () => {
           deletedAt: null,
           createdAt: message.createdAt.toISOString(),
           member: publicMember(message.member),
-          attachments: message.attachments.map(publicAttachment)
+          attachments: message.attachments.map(publicAttachment),
+          replyTo: publicReplyTarget(message.replyTo)
         };
 
         clearTyping(member.roomId, member.identityId, io);
@@ -358,6 +373,7 @@ app.prepare().then(async () => {
           editedAt: editedAt.toISOString(),
           attachments: updated.attachments.map(publicAttachment)
         });
+        io.to(member.roomId).emit("room:messages", await getRecentMessages(member.roomId));
         ack?.({ ok: true });
       } catch (error) {
         ack?.({ ok: false, error: error instanceof Error ? error.message : "Could not edit message" });
@@ -391,6 +407,7 @@ app.prepare().then(async () => {
           id: message.id,
           deletedAt: deletedAt.toISOString()
         });
+        io.to(member.roomId).emit("room:messages", await getRecentMessages(member.roomId));
         ack?.({ ok: true });
       } catch (error) {
         ack?.({ ok: false, error: error instanceof Error ? error.message : "Could not delete message" });
@@ -665,6 +682,30 @@ app.prepare().then(async () => {
         orderBy: { createdAt: "asc" }
       });
       io.to(roomId).emit("room:members", sortRoomMembers(members).map(publicMember));
+    }
+
+    function publicReplyTarget(
+      reply:
+        | {
+            id: string;
+            body: string;
+            deletedAt: Date | null;
+            member: {
+              id: string;
+              nickname: string;
+              role: string;
+            };
+          }
+        | null
+    ) {
+      if (!reply) return null;
+
+      return {
+        id: reply.id,
+        body: reply.body,
+        deletedAt: reply.deletedAt?.toISOString() ?? null,
+        member: publicMember(reply.member)
+      };
     }
 
     socket.on("disconnect", () => {

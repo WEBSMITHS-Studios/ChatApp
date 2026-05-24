@@ -151,7 +151,15 @@ export async function joinRoom(params: {
 export async function getRecentMessages(roomId: string) {
   const messages = await prisma.message.findMany({
     where: { roomId },
-    include: { member: true, attachments: true },
+    include: {
+      member: true,
+      attachments: true,
+      replyTo: {
+        include: {
+          member: true
+        }
+      }
+    },
     orderBy: { createdAt: "desc" },
     take: 80
   });
@@ -167,7 +175,8 @@ export async function getRecentMessages(roomId: string) {
       nickname: message.member.nickname,
       role: normalizeRoomRole(message.member.role)
     },
-    attachments: message.attachments.map(publicAttachment)
+    attachments: message.attachments.map(publicAttachment),
+    replyTo: publicReplyPreview(message.replyTo)
   }));
 }
 
@@ -215,5 +224,33 @@ export function publicAttachment(attachment: {
     deletedAt: attachment.deletedAt?.toISOString() ?? null,
     deletedReason: attachment.deletedReason ?? null,
     url: `/api/attachments/${attachment.id}`
+  };
+}
+
+function publicReplyPreview(
+  reply:
+    | {
+        id: string;
+        body: string;
+        deletedAt: Date | null;
+        member: {
+          id: string;
+          nickname: string;
+          role: string;
+        };
+      }
+    | null
+) {
+  if (!reply) return null;
+
+  return {
+    id: reply.id,
+    body: reply.body,
+    deletedAt: reply.deletedAt?.toISOString() ?? null,
+    member: {
+      id: reply.member.id,
+      nickname: reply.member.nickname,
+      role: normalizeRoomRole(reply.member.role)
+    }
   };
 }
