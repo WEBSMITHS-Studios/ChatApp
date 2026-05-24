@@ -63,6 +63,16 @@ type NicknamePayload = {
   nickname: string;
 };
 
+type RoomRenamePayload = {
+  roomId: string;
+  name: string;
+};
+
+type MemberRemovePayload = {
+  roomId: string;
+  targetMemberId: string;
+};
+
 type TypingPayload = {
   roomId: string;
   isTyping: boolean;
@@ -132,6 +142,11 @@ function clearTyping(roomId: string, identityId: string, socketServer: Server) {
   roomTyping.delete(identityId);
   if (roomTyping.size === 0) typingByRoom.delete(roomId);
   emitTyping(roomId, socketServer);
+}
+
+function sanitizeRoomName(input: string, fallback: string) {
+  const clean = input.trim().replace(/\s+/g, " ").slice(0, 80);
+  return clean || fallback;
 }
 
 function permissionDenied() {
@@ -424,6 +439,66 @@ app.prepare().then(async () => {
       }
     });
 
+    socket.on("room:rename", async (payload: RoomRenamePayload, ack?: AckFn) => {
+      try {
+        const { member } = await getVerifiedActor(payload.roomId);
+        if (member.room.slug === GLOBAL_ROOM_SLUG) throw permissionDenied();
+
+        const canRename =
+          member.room.type === "DIRECT"
+            ? true
+            : isSuperAdmin(member.role);
+        if (!canRename) throw permissionDenied();
+
+        const updated = await prisma.room.update({
+          where: { id: member.roomId },
+          data: {
+            name: sanitizeRoomName(payload.name, member.room.name)
+          }
+        });
+
+        io.to(member.roomId).emit("room:updated", {
+          room: {
+            id: updated.id,
+            slug: updated.slug,
+            name: updated.name,
+            type: updated.type,
+            maxUsers: updated.maxUsers,
+            expiresAt: updated.expiresAt?.toISOString() ?? null
+          }
+        });
+        ack?.({ ok: true, data: { name: updated.name } });
+      } catch (error) {
+        ack?.({ ok: false, error: error instanceof Error ? error.message : "Could not rename room" });
+      }
+    });
+
+    socket.on("member:remove", async (payload: MemberRemovePayload, ack?: AckFn) => {
+      try {
+        const { member } = await getVerifiedActor(payload.roomId);
+        if (member.room.slug === GLOBAL_ROOM_SLUG || member.room.type === "DIRECT") {
+          throw permissionDenied();
+        }
+        if (!isSuperAdmin(member.role)) throw permissionDenied();
+
+        const target = await prisma.roomMember.findFirst({
+          where: {
+            id: payload.targetMemberId,
+            roomId: member.roomId
+          }
+        });
+        if (!target) throw permissionDenied();
+        if (target.id === member.id || target.role === "super_admin") throw permissionDenied();
+
+        await prisma.roomMember.delete({ where: { id: target.id } });
+        evictMemberSessions(member.roomId, target.id, target.identityId);
+        await emitMembers(member.roomId);
+        ack?.({ ok: true });
+      } catch (error) {
+        ack?.({ ok: false, error: error instanceof Error ? error.message : "Could not remove member" });
+      }
+    });
+
     socket.on("member:promote", async (payload: ModerationPayload, ack?: AckFn) => {
       await changeMemberRole(payload, "admin", ack);
     });
@@ -562,6 +637,26 @@ app.prepare().then(async () => {
         return roomSession.isSiteAdmin;
       }
       return canModerate(member.role);
+    }
+
+    function evictMemberSessions(roomId: string, memberId: string, identityId: string) {
+      for (const [socketId, session] of socketSessions.entries()) {
+        const roomSession = session.rooms.get(roomId);
+        if (!roomSession) continue;
+        if (roomSession.memberId !== memberId && roomSession.identityId !== identityId) continue;
+
+        const targetSocket = io.sockets.sockets.get(socketId);
+        targetSocket?.leave(roomId);
+        session.rooms.delete(roomId);
+        removeOnline(roomId, roomSession.identityId, socketId);
+        clearTyping(roomId, roomSession.identityId, io);
+        targetSocket?.emit("room:kicked", { roomId, memberId });
+      }
+
+      io.to(roomId).emit("room:online", {
+        roomId,
+        onlineCount: onlineCount(roomId)
+      });
     }
 
     async function emitMembers(roomId: string) {
