@@ -533,7 +533,7 @@ export function ChatPage({ slug }: { slug: string }) {
         <meta name="description" content="WEBSMITHS ChatApp for guest and account-backed realtime rooms" />
       </Head>
 
-      <main className="relative min-h-screen overflow-hidden bg-ink-950 text-zinc-100">
+      <main className="relative min-h-screen overflow-x-hidden bg-ink-950 text-zinc-100">
         <div className="ambient-orb left-[-6rem] top-[-5rem] h-40 w-40 bg-sky-300/30" />
         <div className="ambient-orb bottom-16 right-[-4rem] h-48 w-48 bg-emerald-300/20" />
 
@@ -1395,7 +1395,7 @@ function GuestSetupInline({
 function ModalFrame({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[75] grid place-items-center bg-slate-950/58 p-4 backdrop-blur-md" onClick={onClose}>
-      <div className="glass-panel-strong w-full max-w-md rounded-[28px] p-6" onClick={(event) => event.stopPropagation()}>
+      <div className="glass-panel-strong max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-[28px] p-6" onClick={(event) => event.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-lg font-semibold text-white">{title}</h2>
           <button className="secondary-button grid h-10 w-10 place-items-center rounded-2xl text-zinc-100" onClick={onClose} type="button">
@@ -1618,8 +1618,18 @@ function LoadingConversation() {
 }
 
 function renderRoomIcon(room: Room) {
-  if (room.slug === "global") return "O";
-  return room.name.trim().charAt(0).toUpperCase() || "#";
+  if (room.slug === "global") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-6 w-6" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M3 12h18" />
+        <path d="M12 3c2.8 2.8 4.2 5.8 4.2 9S14.8 18.2 12 21c-2.8-2.8-4.2-5.8-4.2-9S9.2 5.8 12 3Z" />
+      </svg>
+    );
+  }
+
+  const initial = room.name.trim().charAt(0).toUpperCase() || "#";
+  return <span className="font-semibold">{initial}</span>;
 }
 
 function shouldGroupMessages(previous: ChatMessage | undefined, current: ChatMessage | undefined) {

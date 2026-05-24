@@ -141,7 +141,7 @@ export default function AdminPage() {
       <Head>
         <title>Manage App | WEBSMITHS ChatApp</title>
       </Head>
-      <main className="relative min-h-screen overflow-hidden bg-ink-950 p-4 text-zinc-100 md:p-6">
+      <main className="relative min-h-screen overflow-x-hidden bg-ink-950 p-4 text-zinc-100 md:p-6">
         <div className="ambient-orb left-[-5rem] top-[-4rem] h-44 w-44 bg-sky-300/25" />
         <div className="ambient-orb bottom-0 right-[-4rem] h-56 w-56 bg-emerald-300/20" />
         <div className="mx-auto max-w-7xl">
@@ -212,6 +212,11 @@ export default function AdminPage() {
                       </span>
                     ))}
                   </div>
+                  {updateStatus?.logPath ? (
+                    <div className="mt-3 text-xs text-zinc-500">
+                      Update log: <span className="text-zinc-300">{updateStatus.logPath}</span>
+                    </div>
+                  ) : null}
                 </div>
               </section>
 
@@ -233,6 +238,11 @@ export default function AdminPage() {
                       No update has been started yet.
                     </div>
                   )}
+                  {updateStatus?.error ? (
+                    <div className="rounded-[22px] border border-red-400/20 bg-red-950/30 p-4 text-sm leading-6 text-red-100">
+                      {updateStatus.error}
+                    </div>
+                  ) : null}
                 </div>
               </section>
             </div>

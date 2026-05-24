@@ -1,6 +1,7 @@
 import { spawn } from "child_process";
 import { existsSync, promises as fs } from "fs";
 import path from "path";
+import packageJson from "../../package.json";
 
 export type UpdateStepStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
@@ -28,6 +29,7 @@ const updateRoot = path.join(process.cwd(), ".admin-update");
 const statusPath = path.join(updateRoot, "status.json");
 const runnerPath = path.join(updateRoot, "run-update.cjs");
 const logPath = path.join(updateRoot, "update.log");
+const pm2AppName = process.env.PM2_APP_NAME || packageJson.name || "websmiths-chatapp";
 
 export async function getUpdateStatus(): Promise<UpdateRunStatus | null> {
   try {
@@ -68,7 +70,7 @@ export async function startAppUpdate() {
 
   await fs.writeFile(statusPath, JSON.stringify(initialStatus, null, 2));
   await fs.writeFile(logPath, `[${new Date().toISOString()}] Update queued\n`);
-  await fs.writeFile(runnerPath, createRunnerScript(statusPath, logPath), "utf8");
+  await fs.writeFile(runnerPath, createRunnerScript(statusPath, logPath, pm2AppName), "utf8");
 
   const child = spawn(process.execPath, [runnerPath], {
     cwd: process.cwd(),
@@ -88,7 +90,7 @@ function getDatabaseLabel() {
   return path.basename(filePath);
 }
 
-function createRunnerScript(statusFile: string, logFile: string) {
+function createRunnerScript(statusFile: string, logFile: string, pm2Name: string) {
   return `
 const { execFileSync } = require("child_process");
 const { existsSync, mkdirSync, copyFileSync, appendFileSync, writeFileSync, readFileSync } = require("fs");
@@ -101,6 +103,8 @@ const cwd = process.cwd();
 const isWindows = process.platform === "win32";
 const npmCmd = isWindows ? "npm.cmd" : "npm";
 const pm2Cmd = isWindows ? "pm2.cmd" : "pm2";
+const npxCmd = isWindows ? "npx.cmd" : "npx";
+const pm2AppName = ${JSON.stringify(pm2Name)};
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const backupDir = path.join(cwd, "backups");
 const databaseUrl = process.env.DATABASE_URL || "";
@@ -165,9 +169,8 @@ function run(command, args, options = {}) {
   });
 }
 
-function hasCleanWorktree() {
-  const output = run("git", ["status", "--porcelain"]).trim();
-  return output.length === 0;
+function getTrackedWorktreeChanges() {
+  return run("git", ["status", "--porcelain", "--untracked-files=no"]).trim();
 }
 
 function commandExists(command) {
@@ -180,13 +183,64 @@ function commandExists(command) {
   }
 }
 
+function tryRun(command, args, options = {}) {
+  try {
+    return { ok: true, output: run(command, args, options) };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+function restartPm2() {
+  const attempts = [
+    { command: npmCmd, args: ["run", "pm2:restart"], label: "npm run pm2:restart" },
+    { command: pm2Cmd, args: ["restart", pm2AppName], label: "pm2 restart " + pm2AppName },
+    { command: npxCmd, args: ["pm2", "restart", pm2AppName], label: "npx pm2 restart " + pm2AppName },
+    { command: npmCmd, args: ["run", "pm2:start"], label: "npm run pm2:start" }
+  ];
+
+  const errors = [];
+  for (const attempt of attempts) {
+    if ((attempt.command === pm2Cmd || attempt.command === npxCmd) && !commandExists(attempt.command)) {
+      errors.push(attempt.label + " not available on PATH");
+      continue;
+    }
+    const result = tryRun(attempt.command, attempt.args);
+    if (result.ok) {
+      return {
+        ok: true,
+        detail: (result.output || "").trim().split(/\\r?\\n/).slice(-1)[0] || (attempt.label + " completed")
+      };
+    }
+    errors.push(attempt.label + " failed: " + result.error);
+    log(attempt.label + " failed: " + result.error);
+  }
+
+  return {
+    ok: false,
+    detail: errors.join(" | ")
+  };
+}
+
 (async () => {
   try {
     mkdirSync(backupDir, { recursive: true });
 
     updateStep(0, "running", "Checking git state and required tools");
-    if (!hasCleanWorktree()) {
-      throw new Error("Update aborted because the worktree has uncommitted changes. Commit or stash changes and retry.");
+    const trackedChanges = getTrackedWorktreeChanges();
+    if (trackedChanges) {
+      throw new Error(
+        "Update aborted because the worktree has tracked changes: " +
+          trackedChanges
+            .split(/\\r?\\n/)
+            .filter(Boolean)
+            .slice(0, 8)
+            .join(", ") +
+          ". Commit or stash them and retry."
+      );
     }
     updateStep(0, "completed", ".env, uploads/, and the database file will be preserved.");
 
@@ -217,11 +271,11 @@ function commandExists(command) {
     updateStep(5, "completed", buildOutput.trim().split(/\\r?\\n/).slice(-1)[0] || "Build completed");
 
     updateStep(6, "running", "Restarting PM2 app if available");
-    if (commandExists(pm2Cmd)) {
-      const restartOutput = run(pm2Cmd, ["restart", "websmiths-chatapp"]);
-      updateStep(6, "completed", restartOutput.trim().split(/\\r?\\n/).slice(-1)[0] || "PM2 restart completed");
+    const restart = restartPm2();
+    if (restart.ok) {
+      updateStep(6, "completed", restart.detail);
     } else {
-      updateStep(6, "skipped", "PM2 not found on PATH. Restart the app manually.");
+      updateStep(6, "skipped", "Automatic restart was not available. " + restart.detail);
     }
 
     finishOk("completed");
